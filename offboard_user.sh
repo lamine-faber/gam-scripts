@@ -20,6 +20,18 @@ fi
 echo "Do you want to Wipe $username's calendar? [y/n] "
 read cal_response
 
+# Create log file
+if [ -e "/Users/${loggedInUser}/${logfile}" ] ;
+then
+  echo "${now}: Log file found, script starting" >> ${logfile}
+else
+  echo "[INFO] Log file not found, creating user-deprovisiong.log"
+  touch "/Users/${loggedInUser}/${logfile}"
+  echo "${now}: Log file created, script starting" >> ${logfile}
+fi
+
+
+
 #Starting deprovision
 echo "Deprovisioning " $username
 
@@ -82,10 +94,28 @@ echo "Setting $username to suspended" | tee -a /tmp/$username.log
 $gam update user $username suspended on | tee -a /tmp/$username.log
 echo "Account $username suspendeded" | tee -a /tmp/$username.log
 
-#Transfer docs to data.archive@domain.company
-echo "Transfering Drive data to data.archive@domain.com"
-$gam create datatransfer $email gdrive data.archive@company.com
-echo "Drive transfer initiated" | tee -a /tmp/$username.log
+
+# Move user account to specified Organizational Unit (Dev>null or External/suspended), sitting here and waiting for next actions
+echo "### Moving user to $orgUnit_location O.U"
+
+$gam update user $user_id org "$orgUnit_location" >> $logfile 2>&1
+check_status
+
+# At this point, we also need to free current user email address, allowing us to map this address as an alias to someone else (manager generaly)
+# We don't need to proceed with an update of user ID if we are dealing with "External" account.
+
+if [ "$orgUnit" = "external" ]
+  then exit 0
+else
+  echo "### Freeing user email"
+  new_user_id="${user_id}.old"
+  $gam update user $user_id username $new_user_id >> $logfile 2>&1
+  check_status
+  $gam delete alias $user_id >> $logfile 2>&1
+  check_status
+  echo "${Green} -> $user_id${NC} is now available and can be added as an alias to another user account"
+  echo "${Green} -> $new_user_id${NC} is the new username you can use for offboarding."
+fi
 
 # Should User Account be Deleted?
 read -r -p "Do you want to Delete $username's account? [y/n] " response
@@ -102,12 +132,3 @@ then
 else
 		echo "Not deleting account" | tee -a /tmp/$username.log
 fi
-
-## Printing Log location and Upload to logs folder in data.archive@
-$gam user data.archive@domain.com add drivefile localfile /tmp/$username.log parentid (Drive folder ID here)
-echo "Offboard complete for $username"
-echo "Log file uploaded to data.archive@ log folder"
-
-## Print log contents to Slack via webhook
-curl -X POST -H --silent --data-urlencode "payload={\"text\": \"$(cat /tmp/$username.log | sed "s/\"/'/g")\"}" https://hooks.slack.com/services/uniquekeyhere
-
